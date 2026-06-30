@@ -5,7 +5,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 from groq import Groq
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import credentials, db
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
@@ -19,17 +19,20 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 FIREBASE_KEY = os.getenv("FIREBASE_KEY")
 
 # =========================
-# GROQ
+# GROQ IA
 # =========================
 client = Groq(api_key=GROQ_API_KEY)
 
 # =========================
-# FIREBASE INIT
+# FIREBASE REALTIME DB
 # =========================
 firebase_dict = json.loads(FIREBASE_KEY)
+
 cred = credentials.Certificate(firebase_dict)
-firebase_admin.initialize_app(cred)
-db = firestore.client()
+
+firebase_admin.initialize_app(cred, {
+    'databaseURL': 'https://olivroproibido-a618f-default-rtdb.firebaseio.com/'
+})
 
 # =========================
 # DISCORD BOT
@@ -40,28 +43,30 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # =========================
-# FIREBASE FUNÇÕES
+# MEMÓRIA (REALTIME DB)
 # =========================
-def get_nickname(user_id):
-    doc = db.collection("users").document(str(user_id)).get()
-    if doc.exists:
-        return doc.to_dict().get("nickname")
-    return None
-
 def set_nickname(user_id, nickname):
-    db.collection("users").document(str(user_id)).set({
+    ref = db.reference(f"users/{user_id}")
+    ref.set({
         "nickname": nickname
     })
 
+def get_nickname(user_id):
+    ref = db.reference(f"users/{user_id}")
+    data = ref.get()
+    if data:
+        return data.get("nickname")
+    return None
+
 # =========================
-# EVENTS
+# EVENTO
 # =========================
 @bot.event
 async def on_ready():
-    print(f"Bot online como {bot.user}")
+    print(f"🤖 Bot online como {bot.user}")
 
 # =========================
-# COMANDO NICK
+# COMANDO DE APELIDO
 # =========================
 @bot.command()
 async def nick(ctx, *, name):
@@ -69,7 +74,7 @@ async def nick(ctx, *, name):
     await ctx.send(f"👍 Agora vou te chamar de {name}")
 
 # =========================
-# COMANDO CHAT (PT-BR FORÇADO)
+# CHAT COM MEMÓRIA + PT-BR FORÇADO
 # =========================
 @bot.command()
 async def chat(ctx, *, message):
@@ -80,10 +85,10 @@ async def chat(ctx, *, message):
             prompt = f"""
 Você é um assistente inteligente.
 
-REGRAS IMPORTANTES:
+REGRAS:
 - fale SEMPRE em português do Brasil
-- nunca responda em inglês
-- seja natural e direto
+- seja natural, direto e útil
+- lembre que o usuário se chama {nickname}
 
 Usuário ({nickname}) disse: {message}
 """
@@ -91,10 +96,9 @@ Usuário ({nickname}) disse: {message}
             prompt = f"""
 Você é um assistente inteligente.
 
-REGRAS IMPORTANTES:
+REGRAS:
 - fale SEMPRE em português do Brasil
-- nunca responda em inglês
-- seja natural e direto
+- seja natural e útil
 
 Usuário disse: {message}
 """
@@ -114,13 +118,13 @@ Usuário disse: {message}
         await ctx.send(f"Erro: {e}")
 
 # =========================
-# RENDER PORT FIX (OBRIGATÓRIO)
+# RENDER KEEP ALIVE (PORTA)
 # =========================
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot is running")
+        self.wfile.write(b"Bot online")
 
     def log_message(self, format, *args):
         return
