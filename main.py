@@ -3,112 +3,77 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 from groq import Groq
-
 import firebase_admin
-from firebase_admin import credentials, db
+from firebase_admin import credentials, firestore
+import json
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# =====================
+# =========================
 # ENV
-# =====================
+# =========================
 load_dotenv()
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+FIREBASE_KEY = os.getenv("FIREBASE_KEY")
 
-# =====================
-# GROQ IA
-# =====================
+# =========================
+# GROQ
+# =========================
 client = Groq(api_key=GROQ_API_KEY)
 
-# =====================
-# FIREBASE INIT
-# =====================
-cred = credentials.Certificate("firebase.json")
+# =========================
+# FIREBASE INIT (ENV BASED)
+# =========================
+firebase_dict = json.loads(FIREBASE_KEY)
 
-firebase_admin.initialize_app(cred, {
-    "databaseURL": "https://olivroproibido-a618f-default-rtdb.firebaseio.com"
-})
+cred = credentials.Certificate(firebase_dict)
+firebase_admin.initialize_app(cred)
+db = firestore.client()
 
-# =====================
+# =========================
 # DISCORD BOT
-# =====================
+# =========================
 intents = discord.Intents.default()
 intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# =====================
-# FIREBASE FUNÇÕES
-# =====================
+# =========================
+# FIREBASE FUNCTIONS
+# =========================
+def get_nickname(user_id):
+    doc = db.collection("users").document(str(user_id)).get()
+    if doc.exists:
+        return doc.to_dict().get("nickname")
+    return None
 
-def get_user(user_id):
-    ref = db.reference(f"users/{user_id}")
-    data = ref.get()
+def set_nickname(user_id, nickname):
+    db.collection("users").document(str(user_id)).set({
+        "nickname": nickname
+    })
 
-    if data:
-        return data
-
-    return {
-        "nickname": None,
-        "memory": []
-    }
-
-
-def save_user(user_id, data):
-    db.reference(f"users/{user_id}").set(data)
-
-
-def add_memory(user_id, text):
-    ref = db.reference(f"users/{user_id}/memory")
-    memory = ref.get() or []
-
-    memory.append(text)
-    ref.set(memory[-20:])  # limita memória
-
-# =====================
-# EVENTO
-# =====================
+# =========================
+# COMMANDS
+# =========================
 @bot.event
 async def on_ready():
     print(f"Bot online como {bot.user}")
 
-# =====================
-# COMANDO NICK
-# =====================
 @bot.command()
 async def nick(ctx, *, name):
-    user = get_user(ctx.author.id)
-    user["nickname"] = name
-    save_user(ctx.author.id, user)
+    set_nickname(ctx.author.id, name)
+    await ctx.send(f"👍 Beleza, agora vou te chamar de {name}")
 
-    await ctx.send(f"👍 Agora vou te chamar de {name}")
-
-# =====================
-# COMANDO CHAT COM MEMÓRIA
-# =====================
 @bot.command()
 async def chat(ctx, *, message):
     try:
-        user = get_user(ctx.author.id)
+        nickname = get_nickname(ctx.author.id)
 
-        nickname = user.get("nickname")
-        memory = user.get("memory", [])
-
-        contexto = "\n".join(memory)
-
-        prompt = f"""
-Você é um assistente no Discord.
-
-Nome do usuário: {nickname}
-
-Memória da conversa:
-{contexto}
-
-Usuário disse:
-{message}
-
-Responda naturalmente e curto.
-"""
+        prompt = message
+        if nickname:
+            prompt = f"O usuário se chama {nickname}. Responda de forma natural: {message}"
 
         await ctx.send("🧠 Pensando...")
 
@@ -119,18 +84,27 @@ Responda naturalmente e curto.
             ]
         )
 
-        reply = response.choices[0].message.content
-
-        # salva memória
-        add_memory(ctx.author.id, f"user: {message}")
-        add_memory(ctx.author.id, f"bot: {reply}")
-
-        await ctx.send(reply)
+        await ctx.send(response.choices[0].message.content)
 
     except Exception as e:
         await ctx.send(f"Erro: {e}")
 
-# =====================
-# RUN BOT
-# =====================
+# =========================
+# FAKE WEB SERVER (RENDER FIX)
+# =========================
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running")
+
+def run_server():
+    server = HTTPServer(("0.0.0.0", 10000), Handler)
+    server.serve_forever()
+
+threading.Thread(target=run_server).start()
+
+# =========================
+# START BOT
+# =========================
 bot.run(DISCORD_TOKEN)
