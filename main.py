@@ -24,7 +24,7 @@ FIREBASE_KEY = os.getenv("FIREBASE_KEY")
 client = Groq(api_key=GROQ_API_KEY)
 
 # =========================
-# FIREBASE INIT (ENV JSON)
+# FIREBASE INIT
 # =========================
 firebase_dict = json.loads(FIREBASE_KEY)
 cred = credentials.Certificate(firebase_dict)
@@ -40,7 +40,7 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # =========================
-# FIREBASE FUNCTIONS
+# FIREBASE FUNÇÕES
 # =========================
 def get_nickname(user_id):
     doc = db.collection("users").document(str(user_id)).get()
@@ -54,31 +54,58 @@ def set_nickname(user_id, nickname):
     })
 
 # =========================
-# COMMANDS
+# EVENTS
 # =========================
 @bot.event
 async def on_ready():
     print(f"Bot online como {bot.user}")
 
+# =========================
+# COMANDO NICK
+# =========================
 @bot.command()
 async def nick(ctx, *, name):
     set_nickname(ctx.author.id, name)
     await ctx.send(f"👍 Agora vou te chamar de {name}")
 
+# =========================
+# COMANDO CHAT (PT-BR FORÇADO)
+# =========================
 @bot.command()
 async def chat(ctx, *, message):
     try:
         nickname = get_nickname(ctx.author.id)
 
-        prompt = message
         if nickname:
-            prompt = f"O usuário se chama {nickname}. Responda naturalmente: {message}"
+            prompt = f"""
+Você é um assistente inteligente.
+
+REGRAS IMPORTANTES:
+- fale SEMPRE em português do Brasil
+- nunca responda em inglês
+- seja natural e direto
+
+Usuário ({nickname}) disse: {message}
+"""
+        else:
+            prompt = f"""
+Você é um assistente inteligente.
+
+REGRAS IMPORTANTES:
+- fale SEMPRE em português do Brasil
+- nunca responda em inglês
+- seja natural e direto
+
+Usuário disse: {message}
+"""
 
         await ctx.send("🧠 Pensando...")
 
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}]
+            messages=[
+                {"role": "user", "content": prompt}
+            ]
         )
 
         await ctx.send(response.choices[0].message.content)
@@ -87,7 +114,7 @@ async def chat(ctx, *, message):
         await ctx.send(f"Erro: {e}")
 
 # =========================
-# RENDER WEB SERVER (FIX DEFINITIVO)
+# RENDER PORT FIX (OBRIGATÓRIO)
 # =========================
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -96,7 +123,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(b"Bot is running")
 
     def log_message(self, format, *args):
-        return  # remove spam
+        return
 
 def run_server():
     port = int(os.environ.get("PORT", 10000))
