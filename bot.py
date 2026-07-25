@@ -43,11 +43,27 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-# ======================== FUNÇÃO BYPASS ========================
-def bypass_link(short_url):
-    """Tenta expandir usando Unshorten.me, depois Evo-Bypass."""
-    
-    # 1. TENTA UNshorten.me (mais confiável)
+# ======================== FUNÇÃO BYPASS (MULTI-API) ========================
+
+def bypass_link_lootlabs(short_url):
+    """Tenta expandir usando Bypass.tools (específico para LootLabs/Linkvertise)"""
+    try:
+        print(f"[Bypass] Tentando Bypass.tools: {short_url}")
+        api_url = f"https://bypass.tools/api/bypass?url={short_url}"
+        response = requests.get(api_url, timeout=15)
+        if response.status_code == 200:
+            data = response.json()
+            # Resposta pode ter 'destination' ou 'result'
+            expanded = data.get('destination') or data.get('result')
+            if expanded:
+                print(f"[Bypass] Bypass.tools OK: {expanded}")
+                return expanded
+    except Exception as e:
+        print(f"[Bypass] Bypass.tools ERRO: {e}")
+    return None
+
+def bypass_link_unshorten(short_url):
+    """Tenta expandir usando Unshorten.me (links comuns)"""
     try:
         print(f"[Bypass] Tentando Unshorten.me: {short_url}")
         url = f"https://unshorten.me/api/v1/expand?url={short_url}"
@@ -60,8 +76,10 @@ def bypass_link(short_url):
                 return expanded
     except Exception as e:
         print(f"[Bypass] Unshorten.me ERRO: {e}")
+    return None
 
-    # 2. TENTA Evo-Bypass (API pública do projeto)
+def bypass_link_evobypass(short_url):
+    """Tenta expandir usando Evo-Bypass (fallback)"""
     try:
         print(f"[Bypass] Tentando Evo-Bypass: {short_url}")
         api_url = "https://api.evo-bypass.com/bypass"
@@ -76,10 +94,29 @@ def bypass_link(short_url):
                 return expanded
     except Exception as e:
         print(f"[Bypass] Evo-Bypass ERRO: {e}")
+    return None
 
-    return None  # Nenhum funcionou
+def bypass_link(short_url):
+    """Tenta todas as APIs em sequência até uma funcionar."""
+    # 1. Tenta o bypass específico para LootLabs
+    expanded = bypass_link_lootlabs(short_url)
+    if expanded:
+        return expanded
 
-# ======================== BUSCA IMAGEM ========================
+    # 2. Tenta Unshorten.me (links comuns)
+    expanded = bypass_link_unshorten(short_url)
+    if expanded:
+        return expanded
+
+    # 3. Tenta Evo-Bypass (fallback)
+    expanded = bypass_link_evobypass(short_url)
+    if expanded:
+        return expanded
+
+    return None  # Nenhuma funcionou
+
+# ======================== BUSCA IMAGEM (PIXABAY) ========================
+
 def search_image_pixabay(query):
     try:
         print(f"[Pixabay] Buscando: {query}")
@@ -100,7 +137,8 @@ def search_image_pixabay(query):
         print(f"[Pixabay] ERRO: {e}")
         return None
 
-# ======================== GROQ ========================
+# ======================== RESPOSTA GROQ ========================
+
 async def responder_groq(message, prompt):
     thinking = await message.channel.send("🤔 Processando...")
     try:
@@ -125,7 +163,7 @@ async def ping(ctx):
 
 @bot.command()
 async def bypass(ctx, *, link: str):
-    """Expande um link encurtado. Ex: !bypass https://bit.ly/abc123"""
+    """Expande links encurtados (inclusive LootLabs). Ex: !bypass https://links.lootlabs.gg/..."""
     if not link.startswith("http://") and not link.startswith("https://"):
         await ctx.send("❌ Link inválido. Coloque `http://` ou `https://`")
         return
@@ -135,7 +173,7 @@ async def bypass(ctx, *, link: str):
     if expanded:
         await mensagem.edit(content=f"✅ Link expandido:\n{expanded}")
     else:
-        await mensagem.edit(content="❌ Não foi possível expandir o link. Tente outro método ou verifique se o link é válido.")
+        await mensagem.edit(content="❌ Não foi possível expandir o link. Pode ser que ele não seja suportado ou a API esteja offline.")
 
 # --- MODERAÇÃO ---
 @bot.command()
@@ -179,6 +217,7 @@ async def clear(ctx, quantidade: int):
         await ctx.send(f"❌ Erro: {e}")
 
 # ======================== EVENTO ON_MESSAGE ========================
+
 @bot.event
 async def on_message(message):
     if message.author == bot.user:
@@ -226,6 +265,7 @@ async def on_command_error(ctx, error):
     raise error
 
 # ======================== MAIN ========================
+
 if __name__ == "__main__":
     keep_alive()
     time.sleep(2)
