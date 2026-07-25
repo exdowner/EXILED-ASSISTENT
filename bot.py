@@ -8,11 +8,11 @@ from groq import Groq
 from dotenv import load_dotenv
 from flask import Flask
 from threading import Thread
-import datetime  # Para timeout
+import datetime
 
 load_dotenv()
 
-# --- Variáveis de ambiente ---
+# --- Variáveis ---
 TOKEN = os.getenv("DISCORD_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY")
@@ -20,12 +20,12 @@ PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY")
 if not TOKEN or not GROQ_API_KEY or not PIXABAY_API_KEY:
     raise ValueError("Faltam variáveis: DISCORD_TOKEN, GROQ_API_KEY, PIXABAY_API_KEY")
 
-# --- Flask keep-alive ---
+# --- Flask ---
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "🤖 Bot do Discord está rodando!"
+    return "🤖 Bot rodando!"
 
 def run_flask():
     app.run(host='0.0.0.0', port=8080, threaded=True)
@@ -38,52 +38,33 @@ def keep_alive():
 # --- Bot ---
 intents = discord.Intents.default()
 intents.message_content = True
-intents.members = True  # Para moderação
+intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-# ---------- BUSCA IMAGEM (PIXABAY) COM LOGS ----------
+# ---------- BUSCA IMAGEM (PIXABAY) ----------
 def search_image_pixabay(query):
-    """
-    Busca uma imagem na Pixabay.
-    Retorna a URL ou None.
-    """
     try:
-        print(f"[Pixabay] Buscando por: {query}")
+        print(f"[Pixabay] Buscando: {query}")
         encoded_query = urllib.parse.quote_plus(query)
         url = f"https://pixabay.com/api/?key={PIXABAY_API_KEY}&q={encoded_query}&image_type=photo&per_page=3&safesearch=true"
-        print(f"[Pixabay] URL: {url}")
-
         response = requests.get(url, timeout=10)
-        print(f"[Pixabay] Status code: {response.status_code}")
-
         if response.status_code != 200:
-            print(f"[Pixabay] Erro HTTP: {response.status_code}")
+            print(f"[Pixabay] HTTP {response.status_code}")
             return None
-
         data = response.json()
-        print(f"[Pixabay] Total de hits: {data.get('totalHits', 0)}")
-
         if data.get('hits') and len(data['hits']) > 0:
             image_url = data['hits'][0]['webformatURL']
-            print(f"[Pixabay] URL encontrada: {image_url}")
+            print(f"[Pixabay] URL: {image_url}")
             return image_url
-        else:
-            print("[Pixabay] Nenhum hit encontrado.")
-            return None
-
-    except requests.exceptions.Timeout:
-        print("[Pixabay] Timeout na requisição.")
-        return None
-    except requests.exceptions.RequestException as e:
-        print(f"[Pixabay] Erro de requisição: {e}")
+        print("[Pixabay] Nenhum hit")
         return None
     except Exception as e:
-        print(f"[Pixabay] Erro inesperado: {e}")
+        print(f"[Pixabay] ERRO: {e}")
         return None
 
-# ---------- RESPOSTA GROQ ----------
+# ---------- RESPONDER GROQ ----------
 async def responder_groq(message, prompt):
     thinking = await message.channel.send("🤔 Processando...")
     try:
@@ -106,7 +87,7 @@ async def responder_groq(message, prompt):
 async def ban(ctx, member: discord.Member, *, motivo="Sem motivo"):
     try:
         await member.ban(reason=motivo)
-        await ctx.send(f"✅ {member.mention} foi banido. Motivo: {motivo}")
+        await ctx.send(f"✅ {member.mention} banido. Motivo: {motivo}")
     except Exception as e:
         await ctx.send(f"❌ Erro: {e}")
 
@@ -115,7 +96,7 @@ async def ban(ctx, member: discord.Member, *, motivo="Sem motivo"):
 async def kick(ctx, member: discord.Member, *, motivo="Sem motivo"):
     try:
         await member.kick(reason=motivo)
-        await ctx.send(f"✅ {member.mention} foi expulso. Motivo: {motivo}")
+        await ctx.send(f"✅ {member.mention} expulso. Motivo: {motivo}")
     except Exception as e:
         await ctx.send(f"❌ Erro: {e}")
 
@@ -125,7 +106,7 @@ async def timeout(ctx, member: discord.Member, minutos: int, *, motivo="Sem moti
     try:
         duracao = discord.utils.utcnow() + datetime.timedelta(minutes=minutos)
         await member.timeout(duracao, reason=motivo)
-        await ctx.send(f"✅ {member.mention} timeout de {minutos} minutos. Motivo: {motivo}")
+        await ctx.send(f"✅ {member.mention} timeout de {minutos}min. Motivo: {motivo}")
     except Exception as e:
         await ctx.send(f"❌ Erro: {e}")
 
@@ -141,63 +122,54 @@ async def clear(ctx, quantidade: int):
     except Exception as e:
         await ctx.send(f"❌ Erro: {e}")
 
-# ---------- EVENTOS ----------
-@bot.event
-async def on_ready():
-    print(f"✅ Bot logado como {bot.user}")
-
+# ---------- EVENTO ON_MESSAGE (CORRIGIDO) ----------
 @bot.event
 async def on_message(message):
     if message.author == bot.user:
         return
 
-    # Menção ao bot
+    # Menção
     if bot.user in message.mentions:
         prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
         if prompt:
             await responder_groq(message, prompt)
         else:
-            await message.channel.send("👀 Me pergunte algo junto com a menção!")
+            await message.channel.send("👀 Me pergunte algo!")
         return
 
     # Comando !groq
     if message.content.startswith("!groq"):
         prompt = message.content[len("!groq"):].strip()
         if not prompt:
-            await message.channel.send("❓ Use: `!groq sua pergunta` ou `!groq image:gato`")
+            await message.channel.send("❓ Use: `!groq pergunta` ou `!groq image:gato`")
             return
 
-        # --- Comando de imagem ---
+        # --- IMAGEM ---
         if prompt.lower().startswith("image:"):
             search_term = prompt[len("image:"):].strip()
             if not search_term:
-                await message.channel.send("❓ Especifique o termo. Ex: `!groq image:gato`")
+                await message.channel.send("❓ Ex: `!groq image:gato`")
                 return
 
             thinking = await message.channel.send(f"🔍 Procurando `{search_term}`...")
-            
+
             # Busca a imagem
             image_url = search_image_pixabay(search_term)
-            print(f"[DEBUG] image_url = {image_url}")  # Log no console
+            print(f"[DEBUG] image_url = {image_url}")
 
+            # --- TRATAMENTO CORRETO ---
             if image_url:
+                # Se encontrou, cria embed com a imagem
                 embed = discord.Embed(title=f"📸 {search_term.capitalize()}")
                 embed.set_image(url=image_url)
                 embed.set_footer(text="Imagem da Pixabay")
                 await thinking.edit(content=None, embed=embed)
             else:
-                # Fallback com uma imagem genérica de placeholder (gato)
-                fallback_url = "https://cdn.pixabay.com/photo/2017/02/20/18/03/cat-2083492_640.jpg"
-                embed = discord.Embed(title=f"📸 {search_term.capitalize()} (exemplo)")
-                embed.set_image(url=fallback_url)
-                embed.set_footer(text="Imagem de fallback (Pixabay)")
-                await thinking.edit(content=None, embed=embed)
-                # Opcional: enviar uma mensagem de aviso
-                await message.channel.send("⚠️ Não encontrei a imagem exata, mas aqui está uma similar.")
-
+                # Se NÃO encontrou, edita com uma mensagem de texto (sem embed)
+                await thinking.edit(content=f"❌ Nenhuma imagem encontrada para `{search_term}`.")
             return
 
-        # --- Resposta de texto ---
+        # --- TEXTO (GROQ) ---
         await responder_groq(message, prompt)
         return
 
