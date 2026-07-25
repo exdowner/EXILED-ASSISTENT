@@ -12,7 +12,7 @@ import datetime
 
 load_dotenv()
 
-# --- VARIÁVEIS DE AMBIENTE ---
+# --- Variáveis ---
 TOKEN = os.getenv("DISCORD_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY")
@@ -20,12 +20,12 @@ PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY")
 if not TOKEN or not GROQ_API_KEY or not PIXABAY_API_KEY:
     raise ValueError("Faltam variáveis: DISCORD_TOKEN, GROQ_API_KEY, PIXABAY_API_KEY")
 
-# --- SERVIDOR FLASK (keep-alive para Render) ---
+# --- Flask ---
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "🤖 Bot do Discord está rodando!"
+    return "🤖 Bot rodando!"
 
 def run_flask():
     app.run(host='0.0.0.0', port=8080, threaded=True)
@@ -35,7 +35,7 @@ def keep_alive():
     t.daemon = True
     t.start()
 
-# --- BOT DISCORD ---
+# --- Bot ---
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
@@ -43,12 +43,44 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-# =====================================================
-#                    FUNÇÕES AUXILIARES
-# =====================================================
+# ======================== FUNÇÃO BYPASS ========================
+def bypass_link(short_url):
+    """Tenta expandir usando Unshorten.me, depois Evo-Bypass."""
+    
+    # 1. TENTA UNshorten.me (mais confiável)
+    try:
+        print(f"[Bypass] Tentando Unshorten.me: {short_url}")
+        url = f"https://unshorten.me/api/v1/expand?url={short_url}"
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            expanded = data.get('url') or data.get('destination')
+            if expanded:
+                print(f"[Bypass] Unshorten.me OK: {expanded}")
+                return expanded
+    except Exception as e:
+        print(f"[Bypass] Unshorten.me ERRO: {e}")
 
+    # 2. TENTA Evo-Bypass (API pública do projeto)
+    try:
+        print(f"[Bypass] Tentando Evo-Bypass: {short_url}")
+        api_url = "https://api.evo-bypass.com/bypass"
+        payload = {"url": short_url}
+        headers = {"Content-Type": "application/json"}
+        response = requests.post(api_url, json=payload, timeout=15)
+        if response.status_code == 200:
+            data = response.json()
+            expanded = data.get('destination') or data.get('bypassed_url')
+            if expanded:
+                print(f"[Bypass] Evo-Bypass OK: {expanded}")
+                return expanded
+    except Exception as e:
+        print(f"[Bypass] Evo-Bypass ERRO: {e}")
+
+    return None  # Nenhum funcionou
+
+# ======================== BUSCA IMAGEM ========================
 def search_image_pixabay(query):
-    """Busca imagem na Pixabay e retorna URL ou None."""
     try:
         print(f"[Pixabay] Buscando: {query}")
         encoded_query = urllib.parse.quote_plus(query)
@@ -68,41 +100,8 @@ def search_image_pixabay(query):
         print(f"[Pixabay] ERRO: {e}")
         return None
 
-def bypass_link(short_url):
-    """
-    Expande link encurtado.
-    Tenta UnshortAPI primeiro, se falhar tenta Unshorten.me.
-    """
-    # --- Tentativa 1: UnshortAPI (pública, sem chave) ---
-    try:
-        api_url = f"https://unshort-api.vercel.app/api/expand?url={short_url}"
-        response = requests.get(api_url, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            expanded = data.get('destination') or data.get('url')
-            if expanded:
-                print(f"[UnshortAPI] URL expandida: {expanded}")
-                return expanded
-    except Exception as e:
-        print(f"[UnshortAPI] ERRO: {e}")
-
-    # --- Tentativa 2: Unshorten.me (fallback) ---
-    try:
-        api_url = f"https://unshorten.me/api/v1/expand?url={short_url}"
-        response = requests.get(api_url, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            expanded = data.get('url')
-            if expanded:
-                print(f"[Unshorten.me] URL expandida: {expanded}")
-                return expanded
-    except Exception as e:
-        print(f"[Unshorten.me] ERRO: {e}")
-
-    return None
-
+# ======================== GROQ ========================
 async def responder_groq(message, prompt):
-    """Responde com IA da Groq."""
     thinking = await message.channel.send("🤔 Processando...")
     try:
         completion = groq_client.chat.completions.create(
@@ -118,9 +117,7 @@ async def responder_groq(message, prompt):
     except Exception as e:
         await thinking.edit(content=f"❌ Erro: {e}")
 
-# =====================================================
-#                     COMANDOS
-# =====================================================
+# ======================== COMANDOS ========================
 
 @bot.command()
 async def ping(ctx):
@@ -130,16 +127,15 @@ async def ping(ctx):
 async def bypass(ctx, *, link: str):
     """Expande um link encurtado. Ex: !bypass https://bit.ly/abc123"""
     if not link.startswith("http://") and not link.startswith("https://"):
-        await ctx.send("❌ Link inválido. Use `http://` ou `https://`")
+        await ctx.send("❌ Link inválido. Coloque `http://` ou `https://`")
         return
 
     mensagem = await ctx.send(f"🔍 Expandindo `{link}`...")
     expanded = bypass_link(link)
-
     if expanded:
-        await mensagem.edit(content=f"✅ Link expandido: {expanded}")
+        await mensagem.edit(content=f"✅ Link expandido:\n{expanded}")
     else:
-        await mensagem.edit(content="❌ Não foi possível expandir o link. Verifique se ele é válido.")
+        await mensagem.edit(content="❌ Não foi possível expandir o link. Tente outro método ou verifique se o link é válido.")
 
 # --- MODERAÇÃO ---
 @bot.command()
@@ -182,21 +178,12 @@ async def clear(ctx, quantidade: int):
     except Exception as e:
         await ctx.send(f"❌ Erro: {e}")
 
-# =====================================================
-#                     EVENTOS
-# =====================================================
-
-@bot.event
-async def on_ready():
-    print(f"✅ Bot logado como {bot.user} (ID: {bot.user.id})")
-    print("---- Pronto para usar! ----")
-
+# ======================== EVENTO ON_MESSAGE ========================
 @bot.event
 async def on_message(message):
     if message.author == bot.user:
         return
 
-    # --- MENÇÃO AO BOT ---
     if bot.user in message.mentions:
         prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
         if prompt:
@@ -205,23 +192,19 @@ async def on_message(message):
             await message.channel.send("👀 Me pergunte algo junto com a menção!")
         return
 
-    # --- COMANDO !groq ---
     if message.content.startswith("!groq"):
         prompt = message.content[len("!groq"):].strip()
         if not prompt:
             await message.channel.send("❓ Use: `!groq pergunta` ou `!groq image:gato`")
             return
 
-        # Subcomando de imagem
         if prompt.lower().startswith("image:"):
             search_term = prompt[len("image:"):].strip()
             if not search_term:
                 await message.channel.send("❓ Ex: `!groq image:gato`")
                 return
-
             thinking = await message.channel.send(f"🔍 Procurando `{search_term}`...")
             image_url = search_image_pixabay(search_term)
-
             if image_url:
                 embed = discord.Embed(title=f"📸 {search_term.capitalize()}")
                 embed.set_image(url=image_url)
@@ -231,24 +214,19 @@ async def on_message(message):
                 await thinking.edit(content=f"❌ Nenhuma imagem encontrada para `{search_term}`.")
             return
 
-        # Resposta de texto com Groq
         await responder_groq(message, prompt)
         return
 
-    # Processa outros comandos (ex: !ping, !ban, etc.)
     await bot.process_commands(message)
 
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
-        return  # ignora comandos desconhecidos
+        return
     raise error
 
-# =====================================================
-#                       MAIN
-# =====================================================
-
+# ======================== MAIN ========================
 if __name__ == "__main__":
     keep_alive()
-    time.sleep(2)  # dá tempo do Flask subir
+    time.sleep(2)
     bot.run(TOKEN)
