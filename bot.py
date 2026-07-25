@@ -17,12 +17,12 @@ PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
 if not TOKEN or not GROQ_API_KEY or not PEXELS_API_KEY:
     raise ValueError("Faltam variáveis: DISCORD_TOKEN, GROQ_API_KEY, PEXELS_API_KEY")
 
-# --- Flask keep-alive ---
+# --- Servidor Flask (keep-alive para Render) ---
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "🤖 Bot rodando!"
+    return "🤖 Bot do Discord está rodando!"
 
 def run_flask():
     app.run(host='0.0.0.0', port=8080, threaded=True)
@@ -32,7 +32,7 @@ def keep_alive():
     t.daemon = True
     t.start()
 
-# --- Bot ---
+# --- Bot Discord ---
 intents = discord.Intents.default()
 intents.message_content = True
 
@@ -40,25 +40,28 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 groq_client = Groq(api_key=GROQ_API_KEY)
 pexels_api = API(PEXELS_API_KEY)
 
+# ---------- FUNÇÃO DE BUSCA DE IMAGEM ----------
 def search_image_pexels(query):
-    """Busca uma imagem no Pexels e retorna a URL ou None."""
+    """Retorna a URL da imagem ou None se não encontrar."""
     try:
         print(f"[Pexels] Buscando por: {query}")
         pexels_api.search(query, page=1, results_per_page=1)
         photos = pexels_api.get_entries()
-        print(f"[Pexels] Fotos encontradas: {len(photos) if photos else 0}")
         if photos:
-            # Pega a URL da imagem (tamanho médio)
+            # Pega a primeira foto
             photo = photos[0]
-            # Atributos disponíveis: photo.url, photo.src['medium'], photo.photographer, etc.
-            url = photo.url  # ou photo.src.get('medium')
-            print(f"[Pexels] URL da imagem: {url}")
+            # Tenta obter URL em tamanho médio (fallback para large)
+            url = photo.src.get('medium') or photo.src.get('large') or photo.url
+            print(f"[Pexels] URL encontrada: {url}")
             return url
-        return None
+        else:
+            print("[Pexels] Nenhuma foto encontrada.")
+            return None
     except Exception as e:
         print(f"[Pexels] ERRO: {e}")
         return None
 
+# ---------- FUNÇÃO DE RESPOSTA (GROQ) ----------
 async def responder_groq(message, prompt):
     thinking = await message.channel.send("🤔 Processando...")
     try:
@@ -73,17 +76,19 @@ async def responder_groq(message, prompt):
             resposta = resposta[:1997] + "..."
         await thinking.edit(content=resposta)
     except Exception as e:
-        await thinking.edit(content=f"❌ Erro: {e}")
+        await thinking.edit(content=f"❌ Erro ao consultar Groq: {e}")
 
+# ---------- EVENTOS DO BOT ----------
 @bot.event
 async def on_ready():
-    print(f"✅ Logado como {bot.user}")
+    print(f"✅ Bot logado como {bot.user}")
 
 @bot.event
 async def on_message(message):
     if message.author == bot.user:
         return
 
+    # Responde quando mencionado
     if bot.user in message.mentions:
         prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
         if prompt:
@@ -92,41 +97,46 @@ async def on_message(message):
             await message.channel.send("👀 Me pergunte algo junto com a menção!")
         return
 
+    # Comando !groq
     if message.content.startswith("!groq"):
         prompt = message.content[len("!groq"):].strip()
         if not prompt:
             await message.channel.send("❓ Use: `!groq sua pergunta` ou `!groq image:gato`")
             return
 
-        # --- Busca de imagem ---
+        # ---------- COMANDO DE IMAGEM ----------
         if prompt.lower().startswith("image:"):
             search_term = prompt[len("image:"):].strip()
             if not search_term:
-                await message.channel.send("❓ Especifique o termo. Ex: `!groq image:gato`")
+                await message.channel.send("❓ Especifique o que quer ver. Ex: `!groq image:gato`")
                 return
 
+            # Mensagem de "buscando"
             thinking = await message.channel.send(f"🔍 Procurando `{search_term}`...")
-            try:
-                image_url = search_image_pexels(search_term)
-                print(f"[DEBUG] image_url = {image_url}")
-                if image_url:
-                    embed = discord.Embed(title=f"📸 {search_term.capitalize()}")
-                    embed.set_image(url=image_url)
-                    embed.set_footer(text="Imagem do Pexels")
-                    await thinking.edit(content=None, embed=embed)
-                else:
-                    await thinking.edit(content=f"❌ Nenhuma imagem para `{search_term}`.")
-            except Exception as e:
-                print(f"[ERRO na edição] {e}")
-                await thinking.edit(content=f"❌ Erro ao buscar imagem: {e}")
+
+            # Busca a imagem
+            image_url = search_image_pexels(search_term)
+
+            if image_url:
+                # Cria embed com a imagem
+                embed = discord.Embed(title=f"📸 {search_term.capitalize()}")
+                embed.set_image(url=image_url)
+                embed.set_footer(text="Imagem do Pexels")
+                # Edita a mensagem para mostrar o embed
+                await thinking.edit(content=None, embed=embed)
+            else:
+                # Se não encontrou, edita com mensagem de erro
+                await thinking.edit(content=f"❌ Nenhuma imagem encontrada para `{search_term}`.")
             return
 
-        # --- Resposta de texto com Groq ---
+        # ---------- RESPOSTA DE TEXTO (GROQ) ----------
         await responder_groq(message, prompt)
         return
 
+    # Processa outros comandos (ex: !ping)
     await bot.process_commands(message)
 
+# Trata comandos desconhecidos silenciosamente
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
@@ -137,7 +147,8 @@ async def on_command_error(ctx, error):
 async def ping(ctx):
     await ctx.send(f"🏓 Pong! {round(bot.latency * 1000)}ms")
 
+# ---------- MAIN ----------
 if __name__ == "__main__":
     keep_alive()
-    time.sleep(2)
+    time.sleep(2)  # Dá tempo do Flask subir
     bot.run(TOKEN)
