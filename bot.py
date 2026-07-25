@@ -1,23 +1,27 @@
 import os
 import time
+import requests
+import urllib.parse
 import discord
 from discord.ext import commands
 from groq import Groq
 from dotenv import load_dotenv
 from flask import Flask
 from threading import Thread
-from pexels_api import API
 
 load_dotenv()
 
+# --- Variáveis de ambiente ---
 TOKEN = os.getenv("DISCORD_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
+PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY")
 
-if not TOKEN or not GROQ_API_KEY or not PEXELS_API_KEY:
-    raise ValueError("Faltam variáveis: DISCORD_TOKEN, GROQ_API_KEY, PEXELS_API_KEY")
+if not TOKEN or not GROQ_API_KEY or not PIXABAY_API_KEY:
+    raise ValueError(
+        "Faltam variáveis: DISCORD_TOKEN, GROQ_API_KEY, PIXABAY_API_KEY"
+    )
 
-# --- Servidor Flask (keep-alive para Render) ---
+# --- Servidor Flask para keep-alive (Render) ---
 app = Flask('')
 
 @app.route('/')
@@ -38,27 +42,32 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 groq_client = Groq(api_key=GROQ_API_KEY)
-pexels_api = API(PEXELS_API_KEY)
 
-# ---------- FUNÇÃO DE BUSCA DE IMAGEM ----------
-def search_image_pexels(query):
-    """Retorna a URL da imagem ou None se não encontrar."""
+# ---------- FUNÇÃO DE BUSCA DE IMAGEM (PIXABAY) ----------
+def search_image_pixabay(query):
+    """
+    Busca uma imagem na Pixabay e retorna a URL.
+    Retorna None se não encontrar.
+    """
     try:
-        print(f"[Pexels] Buscando por: {query}")
-        pexels_api.search(query, page=1, results_per_page=1)
-        photos = pexels_api.get_entries()
-        if photos:
-            # Pega a primeira foto
-            photo = photos[0]
-            # Tenta obter URL em tamanho médio (fallback para large)
-            url = photo.src.get('medium') or photo.src.get('large') or photo.url
-            print(f"[Pexels] URL encontrada: {url}")
-            return url
+        print(f"[Pixabay] Buscando por: {query}")
+        # Codifica a consulta para URL
+        encoded_query = urllib.parse.quote_plus(query)
+        url = f"https://pixabay.com/api/?key={PIXABAY_API_KEY}&q={encoded_query}&image_type=photo&per_page=3&safesearch=true"
+        
+        response = requests.get(url, timeout=10)
+        data = response.json()
+        
+        if data.get('hits') and len(data['hits']) > 0:
+            # Pega a URL da primeira imagem (tamanho webformat, ideal para Discord)
+            image_url = data['hits'][0]['webformatURL']
+            print(f"[Pixabay] URL encontrada: {image_url}")
+            return image_url
         else:
-            print("[Pexels] Nenhuma foto encontrada.")
+            print("[Pixabay] Nenhuma imagem encontrada.")
             return None
     except Exception as e:
-        print(f"[Pexels] ERRO: {e}")
+        print(f"[Pixabay] ERRO: {e}")
         return None
 
 # ---------- FUNÇÃO DE RESPOSTA (GROQ) ----------
@@ -114,14 +123,14 @@ async def on_message(message):
             # Mensagem de "buscando"
             thinking = await message.channel.send(f"🔍 Procurando `{search_term}`...")
 
-            # Busca a imagem
-            image_url = search_image_pexels(search_term)
+            # Busca a imagem na Pixabay
+            image_url = search_image_pixabay(search_term)
 
             if image_url:
                 # Cria embed com a imagem
                 embed = discord.Embed(title=f"📸 {search_term.capitalize()}")
                 embed.set_image(url=image_url)
-                embed.set_footer(text="Imagem do Pexels")
+                embed.set_footer(text="Imagem da Pixabay")
                 # Edita a mensagem para mostrar o embed
                 await thinking.edit(content=None, embed=embed)
             else:
